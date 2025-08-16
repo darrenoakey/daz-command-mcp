@@ -16,6 +16,52 @@ from .utils import get_active_session_name
 from .session_manager import append_event
 
 
+def _clean_command_result(result: Dict[str, Any], include_session: bool = False) -> Dict[str, Any]:
+    """
+    Clean up command results to remove unnecessary information.
+    
+    Rules:
+    - Remove stderr if blank
+    - Remove exitcode if zero
+    - Remove command (always)
+    - Remove killed if false
+    - Remove duration (always)
+    - Remove session unless include_session is True
+    """
+    cleaned = {}
+    
+    # Always include success
+    if "success" in result:
+        cleaned["success"] = result["success"]
+    
+    # Include session_id for identification
+    if "session_id" in result:
+        cleaned["session_id"] = result["session_id"]
+    
+    # Copy other core fields
+    for field in ["old_directory", "new_directory", "content", "file_path", "stdout", "working_directory", "message", "info_length"]:
+        if field in result:
+            cleaned[field] = result[field]
+    
+    # Conditional fields based on rules
+    if "stderr" in result and result["stderr"]:  # Only include if not blank
+        cleaned["stderr"] = result["stderr"]
+    
+    if "exitcode" in result and result["exitcode"] != 0:  # Only include if not zero
+        cleaned["exitcode"] = result["exitcode"]
+    
+    if "killed" in result and result["killed"]:  # Only include if true
+        cleaned["killed"] = result["killed"]
+    
+    # Never include: command, duration
+    
+    # Include session only if requested (for open/current commands)
+    if include_session and "session" in result:
+        cleaned["session"] = result["session"]
+    
+    return cleaned
+
+
 def add_learnings(learning_info: str) -> Dict[str, Any]:
     """
     Add learnings or useful information to the session for future reference.
@@ -48,12 +94,14 @@ def add_learnings(learning_info: str) -> Dict[str, Any]:
 
     session_data = append_event(session_name, event)
 
-    return {
+    result = {
         "success": True,
         "message": "Learning information added to session context",
         "info_length": len(learning_info),
         "session": session_data,
     }
+    
+    return _clean_command_result(result)
 
 
 def change_directory(directory: str, why: str) -> Dict[str, Any]:
@@ -89,12 +137,14 @@ def change_directory(directory: str, why: str) -> Dict[str, Any]:
     if not success:
         raise ValueError(f"Failed to change directory: {error_msg}")
 
-    return {
+    result = {
         "success": True,
         "old_directory": old_cwd,
         "new_directory": new_cwd,
         "session": session_data,
     }
+    
+    return _clean_command_result(result)
 
 
 def read_file(file_path: str, why: str) -> Dict[str, Any]:
@@ -129,12 +179,14 @@ def read_file(file_path: str, why: str) -> Dict[str, Any]:
     if not success:
         raise ValueError(f"Failed to read file: {error_msg}")
 
-    return {
+    result = {
         "success": True,
         "content": content,
         "file_path": str(path.resolve()),
         "session": session_data,
     }
+    
+    return _clean_command_result(result)
 
 
 def write_file(file_path: str, content: str, why: str, create_dirs: bool = True) -> Dict[str, Any]:
@@ -170,11 +222,13 @@ def write_file(file_path: str, content: str, why: str, create_dirs: bool = True)
     if not success:
         raise ValueError(f"Failed to write file: {error_msg}")
 
-    return {
+    result = {
         "success": True,
         "file_path": str(path.resolve()),
         "session": session_data,
     }
+    
+    return _clean_command_result(result)
 
 
 def run_command(command: str, why: str, timeout: float = 60, working_directory: Optional[str] = None) -> Dict[str, Any]:
@@ -236,7 +290,7 @@ def run_command(command: str, why: str, timeout: float = 60, working_directory: 
 
     session_data = append_event(session_name, event)
 
-    return {
+    result_dict = {
         "success": success,
         "session_id": session_name,
         "command": command,
@@ -248,3 +302,5 @@ def run_command(command: str, why: str, timeout: float = 60, working_directory: 
         "working_directory": cwd,
         "session": session_data,
     }
+    
+    return _clean_command_result(result_dict)

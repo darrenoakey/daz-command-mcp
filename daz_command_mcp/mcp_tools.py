@@ -15,6 +15,7 @@ from .session_manager import (
 )
 from .command_executor import change_directory, read_file, write_file, run_command, add_learnings
 from .utils import get_active_session_name, set_active_session_name, session_exists, load_session_summary
+from .summary_worker import wait_for_summary_queue_empty, is_summary_queue_empty, get_summary_queue_size
 
 
 # Comment: MCP server instance.
@@ -37,7 +38,10 @@ def daz_session_create(name: str, description: str) -> str:
     try:
         session_data = create_session_record(name, description)
         set_active_session_name(name)
-        return json.dumps({"success": True, "session": session_data}, ensure_ascii=False, indent=2)
+        return json.dumps({
+            "success": True, 
+            "session": session_data
+        }, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
@@ -82,6 +86,55 @@ def daz_session_current() -> str:
             "active_session": session_data,
             "summary": summary
         }, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def daz_session_close() -> str:
+    """
+    Close the current session. This command waits for any pending summary processing 
+    to complete before confirming the session is closed. If summary processing is 
+    still in progress after 30 seconds, returns a message asking to retry.
+    """
+    try:
+        session_name = get_active_session_name()
+        if not session_name:
+            return json.dumps({"error": "No active session to close"}, ensure_ascii=False)
+        
+        # Check if summary queue is already empty
+        if is_summary_queue_empty():
+            # No summary processing pending, can close immediately
+            set_active_session_name(None)  # Clear active session
+            return json.dumps({
+                "success": True,
+                "message": f"Session '{session_name}' closed successfully",
+                "session_name": session_name
+            }, ensure_ascii=False, indent=2)
+        
+        # Queue is not empty, wait for it to finish
+        queue_size = get_summary_queue_size()
+        if wait_for_summary_queue_empty(timeout=30.0):
+            # Queue became empty within timeout
+            set_active_session_name(None)  # Clear active session
+            return json.dumps({
+                "success": True,
+                "message": f"Session '{session_name}' closed successfully after waiting for summary processing",
+                "session_name": session_name,
+                "waited_for_summary": True
+            }, ensure_ascii=False, indent=2)
+        else:
+            # Queue still not empty after timeout
+            current_queue_size = get_summary_queue_size()
+            return json.dumps({
+                "success": False,
+                "message": "We are waiting for the summary queue to finish - please try calling close session again immediately",
+                "session_name": session_name,
+                "queue_size_before": queue_size,
+                "queue_size_after": current_queue_size,
+                "waited_seconds": 30
+            }, ensure_ascii=False, indent=2)
+            
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 

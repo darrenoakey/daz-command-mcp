@@ -58,6 +58,36 @@ def update_token_limit(new_limit: int) -> None:
         print(f"[summary-worker] token limit adjusted: {old_limit} → {new_limit}", file=sys.stderr)
 
 
+def is_summary_queue_empty() -> bool:
+    """Check if the summary queue is empty"""
+    return _summary_queue.empty()
+
+
+def get_summary_queue_size() -> int:
+    """Get the approximate size of the summary queue"""
+    return _summary_queue.qsize()
+
+
+def wait_for_summary_queue_empty(timeout: float = 30.0) -> bool:
+    """
+    Wait for the summary queue to become empty.
+    
+    Args:
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        True if queue became empty within timeout, False otherwise
+    """
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        if is_summary_queue_empty():
+            return True
+        time.sleep(0.5)  # Check every 500ms
+    
+    return False
+
+
 def extract_context_length_from_error(error_message: str) -> Optional[int]:
     """
     Extract the first number from a context length error message.
