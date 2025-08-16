@@ -17,7 +17,7 @@ LLM_MODEL_NAME = "lm-studio:openai/gpt-oss-20b"
 
 # Comment: Resolve script directory and sessions path.
 SCRIPT_DIR = Path(__file__).resolve().parent
-SESSIONS_DIR = SCRIPT_DIR / "sessions"
+SESSIONS_DIR = SCRIPT_DIR.parent / "sessions"
 
 
 # --- Global State ---

@@ -11,8 +11,8 @@ import sys
 from typing import Any
 from dazllm import Llm
 
-from .summary_worker import ensure_summary_thread, wait_for_summary_worker_init
-from .mcp_tools import mcp
+from src.summary_worker import ensure_summary_thread, wait_for_summary_worker_init
+from src.mcp_tools import mcp
 
 LLM_MODEL_NAME = "lm-studio:openai/gpt-oss-20b"
 
