@@ -152,10 +152,9 @@ def daz_add_learnings(learning_info: str) -> str:
     - Error patterns or troubleshooting discoveries
     - Any contextual information that would help someone continue work later
     
-    This is the only command that doesn't require a separate 'why' parameter since 
-    the purpose is self-evident - preserving useful information for session context.
-    This function doesn't execute any commands; it simply adds the information to 
-    the LLM processing queue for inclusion in session summaries.
+    This function preserves useful information for session context and doesn't 
+    execute any commands; it simply adds the information to the LLM processing 
+    queue for inclusion in session summaries.
     """
     try:
         result = add_learnings(learning_info)
@@ -165,40 +164,120 @@ def daz_add_learnings(learning_info: str) -> str:
 
 
 @mcp.tool()
-def daz_command_cd(directory: str, why: str) -> str:
-    """Change directory for the active session."""
+def daz_command_cd(
+    directory: str, 
+    current_task: str, 
+    summary_of_what_we_just_did: str, 
+    summary_of_what_we_about_to_do: str
+) -> str:
+    """
+    Change directory for the active session.
+    
+    ⚠️  CRITICAL: All three context parameters are REQUIRED and essential for maintaining 
+    task continuity across the session. These parameters are the MOST IMPORTANT part 
+    of each command as they preserve the complete context of your work.
+    
+    Parameters:
+    - current_task: The main task you are currently working on (e.g., "Implementing the new authentication system")
+    - summary_of_what_we_just_did: Brief summary of the last action and its outcome (e.g., "Successfully read the user.py file and identified the login function that needs modification")
+    - summary_of_what_we_about_to_do: What you plan to do next (e.g., "Navigate to the auth directory to examine the existing authentication modules")
+    
+    If you are in the middle of a multi-step task, maintain the COMPLETE task history 
+    in these parameters to ensure seamless continuation of work.
+    """
     try:
-        result = change_directory(directory, why)
+        result = change_directory(directory, current_task, summary_of_what_we_just_did, summary_of_what_we_about_to_do)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 @mcp.tool()
-def daz_command_read(file_path: str, why: str) -> str:
-    """Read a text file for the active session. Provide 'why' to explain the purpose."""
+def daz_command_read(
+    file_path: str, 
+    current_task: str, 
+    summary_of_what_we_just_did: str, 
+    summary_of_what_we_about_to_do: str
+) -> str:
+    """
+    Read a text file for the active session.
+    
+    ⚠️  CRITICAL: All three context parameters are REQUIRED and essential for maintaining 
+    task continuity across the session. These parameters are the MOST IMPORTANT part 
+    of each command as they preserve the complete context of your work.
+    
+    Parameters:
+    - current_task: The main task you are currently working on (e.g., "Debugging the payment processing error")
+    - summary_of_what_we_just_did: Brief summary of the last action and its outcome (e.g., "Changed to the payment directory and located the payment.py file")
+    - summary_of_what_we_about_to_do: What you plan to do next (e.g., "Read the payment.py file to identify the source of the transaction error")
+    
+    If you are in the middle of a multi-step task, maintain the COMPLETE task history 
+    in these parameters to ensure seamless continuation of work.
+    """
     try:
-        result = read_file(file_path, why)
+        result = read_file(file_path, current_task, summary_of_what_we_just_did, summary_of_what_we_about_to_do)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 @mcp.tool()
-def daz_command_write(file_path: str, content: str, why: str, create_dirs: bool = True) -> str:
-    """Write a text file for the active session. Provide 'why' to explain the purpose."""
+def daz_command_write(
+    file_path: str, 
+    content: str, 
+    current_task: str, 
+    summary_of_what_we_just_did: str, 
+    summary_of_what_we_about_to_do: str, 
+    create_dirs: bool = True
+) -> str:
+    """
+    Write a text file for the active session.
+    
+    ⚠️  CRITICAL: All three context parameters are REQUIRED and essential for maintaining 
+    task continuity across the session. These parameters are the MOST IMPORTANT part 
+    of each command as they preserve the complete context of your work.
+    
+    Parameters:
+    - current_task: The main task you are currently working on (e.g., "Creating the new user registration system")
+    - summary_of_what_we_just_did: Brief summary of the last action and its outcome (e.g., "Analyzed the existing registration code and identified required modifications")
+    - summary_of_what_we_about_to_do: What you plan to do next (e.g., "Write the updated registration.py file with improved validation and error handling")
+    
+    If you are in the middle of a multi-step task, maintain the COMPLETE task history 
+    in these parameters to ensure seamless continuation of work.
+    """
     try:
-        result = write_file(file_path, content, why, create_dirs)
+        result = write_file(file_path, content, current_task, summary_of_what_we_just_did, summary_of_what_we_about_to_do, create_dirs)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 @mcp.tool()
-def daz_command_run(command: str, why: str, timeout: float = 60, working_directory: Optional[str] = None) -> str:
-    """Run a shell command for the active session. Provide 'why' to explain the purpose."""
+def daz_command_run(
+    command: str, 
+    current_task: str, 
+    summary_of_what_we_just_did: str, 
+    summary_of_what_we_about_to_do: str, 
+    timeout: float = 60, 
+    working_directory: Optional[str] = None
+) -> str:
+    """
+    Run a shell command for the active session.
+    
+    ⚠️  CRITICAL: All three context parameters are REQUIRED and essential for maintaining 
+    task continuity across the session. These parameters are the MOST IMPORTANT part 
+    of each command as they preserve the complete context of your work.
+    
+    Parameters:
+    - current_task: The main task you are currently working on (e.g., "Setting up the development environment for the new API")
+    - summary_of_what_we_just_did: Brief summary of the last action and its outcome (e.g., "Successfully installed the required dependencies via pip")
+    - summary_of_what_we_about_to_do: What you plan to do next (e.g., "Run the test suite to verify the environment setup is working correctly")
+    
+    If you are in the middle of a multi-step task, maintain the COMPLETE task history 
+    in these parameters to ensure seamless continuation of work.
+    """
     try:
-        result = run_command(command, why, timeout, working_directory)
+        result = run_command(command, current_task, summary_of_what_we_just_did, summary_of_what_we_about_to_do, timeout, working_directory)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)

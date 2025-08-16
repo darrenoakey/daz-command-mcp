@@ -37,11 +37,13 @@ _summary_worker_init_error: Optional[str] = None
 
 
 # --- TypedDicts ---
-# Comment: Event payload recorded to the session file.
+# Comment: Event payload recorded to the session file with rich context tracking.
 class Event(TypedDict, total=False):
     timestamp: float
     type: str
-    why: str
+    current_task: str  # The task we are in the middle of trying to achieve
+    summary_of_what_we_just_did: str  # Summary of what we've just done and how it went
+    summary_of_what_we_about_to_do: str  # Summary of what we're about to do
     inputs: Dict[str, Any]
     outputs: Dict[str, Any]
     duration: float

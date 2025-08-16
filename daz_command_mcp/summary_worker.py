@@ -272,7 +272,12 @@ def peek_queue_for_same_session(session_name: str, max_tokens: Optional[int] = N
                 event_text += json.dumps(event["inputs"])
             if event.get("outputs"):
                 event_text += json.dumps(event["outputs"])
-            event_text += event.get("why", "") + event.get("type", "")
+            
+            # Use the new Event structure fields for context
+            event_text += event.get("current_task", "")
+            event_text += event.get("summary_of_what_we_just_did", "")
+            event_text += event.get("summary_of_what_we_about_to_do", "")
+            event_text += event.get("type", "")
             
             item_tokens = estimate_tokens(old_summary + event_text)
             
@@ -339,9 +344,27 @@ def format_batched_events(events_data: List[Dict[str, Any]]) -> str:
             input_summary = input_text[:256] + "..." if len(input_text) > 256 else input_text
             output_summary = output_text[:256] + "..." if len(output_text) > 256 else output_text
         
+        # Build the purpose/context from the new Event structure
+        purpose_parts = []
+        
+        # Add current task
+        if event.get("current_task"):
+            purpose_parts.append(f"Task: {event['current_task']}")
+        
+        # Add what was just done
+        if event.get("summary_of_what_we_just_did"):
+            purpose_parts.append(f"Just did: {event['summary_of_what_we_just_did']}")
+        
+        # Add what's about to be done
+        if event.get("summary_of_what_we_about_to_do"):
+            purpose_parts.append(f"About to do: {event['summary_of_what_we_about_to_do']}")
+        
+        # Join the purpose parts or use a fallback
+        purpose_text = " | ".join(purpose_parts) if purpose_parts else "No context provided"
+        
         event_block = f"""EVENT {i}:
   Type: {event.get('type', '')}
-  Purpose: {event.get('why', '')}
+  Purpose: {purpose_text}
   Timestamp: {event.get('timestamp', time.time())}
   Duration: {event.get('duration', 0)}s
   Input Details: {input_summary}

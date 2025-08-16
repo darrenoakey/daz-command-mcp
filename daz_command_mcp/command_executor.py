@@ -74,8 +74,7 @@ def add_learnings(learning_info: str) -> Dict[str, Any]:
     - Error patterns or troubleshooting discoveries
     - Any contextual information that would help someone continue work later
     
-    Unlike other commands, this doesn't require a 'why' parameter since the purpose
-    is self-evident - preserving useful information for the session context.
+    This function preserves useful information for the session context.
     """
     session_name = get_active_session_name()
     if not session_name:
@@ -86,7 +85,9 @@ def add_learnings(learning_info: str) -> Dict[str, Any]:
     event: Event = {
         "timestamp": start_time,
         "type": "learning",
-        "why": "Adding useful information for future session work",
+        "current_task": "Capturing useful session context",
+        "summary_of_what_we_just_did": "Identified important information to preserve",
+        "summary_of_what_we_about_to_do": "Store this information for future session reference",
         "inputs": {"learning_info": learning_info},
         "outputs": {"captured": True, "info_length": len(learning_info)},
         "duration": time.time() - start_time,
@@ -104,7 +105,7 @@ def add_learnings(learning_info: str) -> Dict[str, Any]:
     return _clean_command_result(result)
 
 
-def change_directory(directory: str, why: str) -> Dict[str, Any]:
+def change_directory(directory: str, current_task: str, summary_of_what_we_just_did: str, summary_of_what_we_about_to_do: str) -> Dict[str, Any]:
     """Changes the current working directory for the active session."""
     session_name = get_active_session_name()
     if not session_name:
@@ -126,7 +127,9 @@ def change_directory(directory: str, why: str) -> Dict[str, Any]:
     event: Event = {
         "timestamp": start_time,
         "type": "cd",
-        "why": why,
+        "current_task": current_task,
+        "summary_of_what_we_just_did": summary_of_what_we_just_did,
+        "summary_of_what_we_about_to_do": summary_of_what_we_about_to_do,
         "inputs": {"directory": directory, "old_cwd": old_cwd},
         "outputs": {"success": success, "new_cwd": new_cwd, "error": error_msg},
         "duration": time.time() - start_time,
@@ -147,7 +150,7 @@ def change_directory(directory: str, why: str) -> Dict[str, Any]:
     return _clean_command_result(result)
 
 
-def read_file(file_path: str, why: str) -> Dict[str, Any]:
+def read_file(file_path: str, current_task: str, summary_of_what_we_just_did: str, summary_of_what_we_about_to_do: str) -> Dict[str, Any]:
     """Reads a text file for the active session."""
     session_name = get_active_session_name()
     if not session_name:
@@ -168,7 +171,9 @@ def read_file(file_path: str, why: str) -> Dict[str, Any]:
     event: Event = {
         "timestamp": start_time,
         "type": "read",
-        "why": why,
+        "current_task": current_task,
+        "summary_of_what_we_just_did": summary_of_what_we_just_did,
+        "summary_of_what_we_about_to_do": summary_of_what_we_about_to_do,
         "inputs": {"file_path": file_path, "absolute_path": str(path.resolve())},
         "outputs": {"success": success, "content_length": len(content), "error": error_msg},
         "duration": time.time() - start_time,
@@ -189,7 +194,7 @@ def read_file(file_path: str, why: str) -> Dict[str, Any]:
     return _clean_command_result(result)
 
 
-def write_file(file_path: str, content: str, why: str, create_dirs: bool = True) -> Dict[str, Any]:
+def write_file(file_path: str, content: str, current_task: str, summary_of_what_we_just_did: str, summary_of_what_we_about_to_do: str, create_dirs: bool = True) -> Dict[str, Any]:
     """Writes a text file for the active session."""
     session_name = get_active_session_name()
     if not session_name:
@@ -211,7 +216,9 @@ def write_file(file_path: str, content: str, why: str, create_dirs: bool = True)
     event: Event = {
         "timestamp": start_time,
         "type": "write",
-        "why": why,
+        "current_task": current_task,
+        "summary_of_what_we_just_did": summary_of_what_we_just_did,
+        "summary_of_what_we_about_to_do": summary_of_what_we_about_to_do,
         "inputs": {"file_path": file_path, "content_length": len(content), "create_dirs": create_dirs},
         "outputs": {"success": success, "absolute_path": str(path.resolve()), "error": error_msg},
         "duration": time.time() - start_time,
@@ -231,7 +238,7 @@ def write_file(file_path: str, content: str, why: str, create_dirs: bool = True)
     return _clean_command_result(result)
 
 
-def run_command(command: str, why: str, timeout: float = 60, working_directory: Optional[str] = None) -> Dict[str, Any]:
+def run_command(command: str, current_task: str, summary_of_what_we_just_did: str, summary_of_what_we_about_to_do: str, timeout: float = 60, working_directory: Optional[str] = None) -> Dict[str, Any]:
     """Runs a shell command for the active session."""
     session_name = get_active_session_name()
     if not session_name:
@@ -275,7 +282,9 @@ def run_command(command: str, why: str, timeout: float = 60, working_directory: 
     event: Event = {
         "timestamp": start_time,
         "type": "run",
-        "why": why,
+        "current_task": current_task,
+        "summary_of_what_we_just_did": summary_of_what_we_just_did,
+        "summary_of_what_we_about_to_do": summary_of_what_we_about_to_do,
         "inputs": {"command": command, "timeout": timeout, "working_directory": cwd},
         "outputs": {
             "success": success,
