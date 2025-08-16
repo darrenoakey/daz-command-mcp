@@ -23,9 +23,9 @@ def create_session_metadata(session_name: str) -> Dict[str, Any]:
     """Create session metadata dict for public view"""
     session_dir = get_session_dir(session_name)
     
-    # Count events by counting lines in event_log.json
+    # Count events by counting lines in event_log.jsonl
     events_count = 0
-    log_path = session_dir / "event_log.json"
+    log_path = session_dir / "event_log.jsonl"
     if log_path.exists():
         try:
             with log_path.open("r", encoding="utf-8") as f:

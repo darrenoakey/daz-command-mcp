@@ -62,7 +62,7 @@ def append_event_to_log(session_name: str, event: Dict[str, Any]) -> None:
     """Append event to event log (JSONL format)"""
     session_dir = get_session_dir(session_name)
     session_dir.mkdir(parents=True, exist_ok=True)
-    log_path = session_dir / "event_log.json"
+    log_path = session_dir / "event_log.jsonl"
     
     # Append as JSON line
     with log_path.open("a", encoding="utf-8") as f:
@@ -75,7 +75,7 @@ def append_error_to_log(session_name: str, error: Dict[str, Any]) -> None:
     try:
         session_dir = get_session_dir(session_name)
         session_dir.mkdir(parents=True, exist_ok=True)
-        errors_path = session_dir / "errors.json"
+        errors_path = session_dir / "errors.jsonl"
         
         # Append as JSON line
         with errors_path.open("a", encoding="utf-8") as f:

@@ -16,6 +16,46 @@ from .utils import get_active_session_name
 from .session_manager import append_event
 
 
+def add_learnings(learning_info: str) -> Dict[str, Any]:
+    """
+    Add learnings or useful information to the session for future reference.
+    
+    This function captures important discoveries, insights, or context that might be 
+    valuable for future work in this session. Examples include:
+    - Full directory paths discovered during navigation
+    - Important file locations or project structure insights  
+    - Configuration details or environment setup notes
+    - Error patterns or troubleshooting discoveries
+    - Any contextual information that would help someone continue work later
+    
+    Unlike other commands, this doesn't require a 'why' parameter since the purpose
+    is self-evident - preserving useful information for the session context.
+    """
+    session_name = get_active_session_name()
+    if not session_name:
+        raise ValueError("No active session. Create or open a session first.")
+
+    start_time = time.time()
+
+    event: Event = {
+        "timestamp": start_time,
+        "type": "learning",
+        "why": "Adding useful information for future session work",
+        "inputs": {"learning_info": learning_info},
+        "outputs": {"captured": True, "info_length": len(learning_info)},
+        "duration": time.time() - start_time,
+    }
+
+    session_data = append_event(session_name, event)
+
+    return {
+        "success": True,
+        "message": "Learning information added to session context",
+        "info_length": len(learning_info),
+        "session": session_data,
+    }
+
+
 def change_directory(directory: str, why: str) -> Dict[str, Any]:
     """Changes the current working directory for the active session."""
     session_name = get_active_session_name()

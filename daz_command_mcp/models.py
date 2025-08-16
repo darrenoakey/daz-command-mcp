@@ -30,6 +30,11 @@ _summary_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
 _summary_thread_started = False
 _summary_thread_started_lock = threading.Lock()
 
+# Comment: Summary worker initialization signaling
+_summary_worker_init_event = threading.Event()
+_summary_worker_init_success: Optional[bool] = None
+_summary_worker_init_error: Optional[str] = None
+
 
 # --- TypedDicts ---
 # Comment: Event payload recorded to the session file.

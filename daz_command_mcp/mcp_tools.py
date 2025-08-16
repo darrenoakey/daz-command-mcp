@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 from .session_manager import (
     list_session_views, create_session_record, create_session_metadata
 )
-from .command_executor import change_directory, read_file, write_file, run_command
+from .command_executor import change_directory, read_file, write_file, run_command, add_learnings
 from .utils import get_active_session_name, set_active_session_name, session_exists, load_session_summary
 
 
@@ -82,6 +82,31 @@ def daz_session_current() -> str:
             "active_session": session_data,
             "summary": summary
         }, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def daz_add_learnings(learning_info: str) -> str:
+    """
+    Add learnings or useful information to the session for future reference.
+    
+    Use this to capture important discoveries, insights, or context that might be 
+    valuable for future work in this session. Examples include:
+    - Full directory paths discovered during navigation
+    - Important file locations or project structure insights  
+    - Configuration details or environment setup notes
+    - Error patterns or troubleshooting discoveries
+    - Any contextual information that would help someone continue work later
+    
+    This is the only command that doesn't require a separate 'why' parameter since 
+    the purpose is self-evident - preserving useful information for session context.
+    This function doesn't execute any commands; it simply adds the information to 
+    the LLM processing queue for inclusion in session summaries.
+    """
+    try:
+        result = add_learnings(learning_info)
+        return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
