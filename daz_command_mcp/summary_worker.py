@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-LLM Summary Worker for DAZ Command MCP Server
+LLM Summary Worker for DAZ Command MCP Server - REFACTORED VERSION
+Now uses the separated SummaryGenerator for LLM logic while handling worker management.
 """
 
 from __future__ import annotations
@@ -9,38 +10,24 @@ import json
 import sys
 import time
 import threading
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-# Fail-fast dependency check
-try:
-    from dazllm import Llm
-except ImportError as e:
-    print(f"FATAL ERROR: dazllm module not available: {e}", file=sys.stderr)
-    print(f"Install with: {sys.executable} -m pip install dazllm", file=sys.stderr)
-    print(f"Current Python executable: {sys.executable}", file=sys.stderr)
-    sys.exit(1)
 
 from .models import (
     LLM_MODEL_NAME, _summary_queue, _summary_thread_started,
     _summary_thread_started_lock, _summary_worker_init_event,
     _summary_worker_init_success, _summary_worker_init_error, Event
 )
-from .utils import save_session_summary, truncate_with_indication, get_session_dir
-
+from .utils import save_session_summary, get_session_dir
+from .summary_generator import SummaryGenerator
 
 # Global token limit management
 _current_token_limit = 30000  # Default starting limit
 _token_limit_lock = threading.Lock()
 
-
-def estimate_tokens(text: str) -> int:
-    """
-    Estimate token count for text.
-    Rule of thumb: ~4 characters per token for English text.
-    """
-    return len(text) // 4
+# Global summary generator instance
+_summary_generator = None
+_generator_lock = threading.Lock()
 
 
 def get_current_token_limit() -> int:
@@ -88,23 +75,6 @@ def wait_for_summary_queue_empty(timeout: float = 30.0) -> bool:
     return False
 
 
-def extract_context_length_from_error(error_message: str) -> Optional[int]:
-    """
-    Extract the first number from a context length error message.
-    
-    Example error: "Reached context length of 4096 tokens with model..."
-    Returns: 4096
-    """
-    try:
-        # Look for the first number in the error message
-        match = re.search(r'\b(\d+)\b', error_message)
-        if match:
-            return int(match.group(1))
-    except Exception as e:
-        print(f"[summary-worker] failed to extract context length from error: {e}", file=sys.stderr)
-    return None
-
-
 def handle_context_length_error(error_message: str, session_name: str) -> bool:
     """
     Handle a context length error by adjusting the token limit.
@@ -112,8 +82,12 @@ def handle_context_length_error(error_message: str, session_name: str) -> bool:
     Returns True if the limit was adjusted, False otherwise.
     """
     try:
-        # Extract the context length from the error
-        context_length = extract_context_length_from_error(error_message)
+        # Use the generator's method to extract context length
+        global _summary_generator
+        if _summary_generator is None:
+            return False
+            
+        context_length = _summary_generator.extract_context_length_from_error(error_message)
         if context_length is None:
             print(f"[summary-worker] could not extract context length from error: {error_message}", file=sys.stderr)
             return False
@@ -262,24 +236,29 @@ def peek_queue_for_same_session(session_name: str, max_tokens: Optional[int] = N
                 items_to_put_back.append(item)
                 break
             
-            # Estimate tokens for this item
-            event = item["event"]
-            old_summary = item["old_summary"]
-            
-            # Rough token estimation for the event content
-            event_text = ""
-            if event.get("inputs"):
-                event_text += json.dumps(event["inputs"])
-            if event.get("outputs"):
-                event_text += json.dumps(event["outputs"])
-            
-            # Use the new Event structure fields for context
-            event_text += event.get("current_task", "")
-            event_text += event.get("summary_of_what_we_just_did", "")
-            event_text += event.get("summary_of_what_we_about_to_do", "")
-            event_text += event.get("type", "")
-            
-            item_tokens = estimate_tokens(old_summary + event_text)
+            # Estimate tokens for this item using the generator's method
+            global _summary_generator
+            if _summary_generator is None:
+                # Fallback estimation
+                item_tokens = len(json.dumps(item)) // 4
+            else:
+                event = item["event"]
+                old_summary = item["old_summary"]
+                
+                # Rough token estimation for the event content
+                event_text = ""
+                if event.get("inputs"):
+                    event_text += json.dumps(event["inputs"])
+                if event.get("outputs"):
+                    event_text += json.dumps(event["outputs"])
+                
+                # Use the new Event structure fields for context
+                event_text += event.get("current_task", "")
+                event_text += event.get("summary_of_what_we_just_did", "")
+                event_text += event.get("summary_of_what_we_about_to_do", "")
+                event_text += event.get("type", "")
+                
+                item_tokens = _summary_generator.estimate_tokens(old_summary + event_text)
             
             # If adding this item would exceed our limit, put it back and stop
             if estimated_tokens + item_tokens > max_tokens:
@@ -304,118 +283,26 @@ def peek_queue_for_same_session(session_name: str, max_tokens: Optional[int] = N
     return batched_items
 
 
-def format_batched_events(events_data: List[Dict[str, Any]]) -> str:
-    """Format multiple events into a single text block for the LLM"""
-    if not events_data:
-        return ""
-    
-    formatted_events = []
-    
-    for i, item in enumerate(events_data, 1):
-        event = item["event"]
-        
-        # Prepare input and output text for this event
-        input_text = ""
-        output_text = ""
-        
-        try:
-            if event.get("inputs"):
-                for key, value in event["inputs"].items():
-                    if isinstance(value, str):
-                        input_text += f"{key}: {value}\n"
-                    else:
-                        input_text += f"{key}: {json.dumps(value)}\n"
-            
-            if event.get("outputs"):
-                for key, value in event["outputs"].items():
-                    if isinstance(value, str):
-                        output_text += f"{key}: {value}\n"
-                    else:
-                        output_text += f"{key}: {json.dumps(value)}\n"
-        except Exception as e:
-            input_text = f"Error processing inputs: {e}"
-            output_text = f"Error processing outputs: {e}"
-        
-        # Truncate for this event
-        try:
-            input_summary = truncate_with_indication(input_text.strip(), 256, from_end=False)
-            output_summary = truncate_with_indication(output_text.strip(), 256, from_end=True)
-        except Exception as e:
-            input_summary = input_text[:256] + "..." if len(input_text) > 256 else input_text
-            output_summary = output_text[:256] + "..." if len(output_text) > 256 else output_text
-        
-        # Build the purpose/context from the new Event structure
-        purpose_parts = []
-        
-        # Add current task
-        if event.get("current_task"):
-            purpose_parts.append(f"Task: {event['current_task']}")
-        
-        # Add what was just done
-        if event.get("summary_of_what_we_just_did"):
-            purpose_parts.append(f"Just did: {event['summary_of_what_we_just_did']}")
-        
-        # Add what's about to be done
-        if event.get("summary_of_what_we_about_to_do"):
-            purpose_parts.append(f"About to do: {event['summary_of_what_we_about_to_do']}")
-        
-        # Join the purpose parts or use a fallback
-        purpose_text = " | ".join(purpose_parts) if purpose_parts else "No context provided"
-        
-        event_block = f"""EVENT {i}:
-  Type: {event.get('type', '')}
-  Purpose: {purpose_text}
-  Timestamp: {event.get('timestamp', time.time())}
-  Duration: {event.get('duration', 0)}s
-  Input Details: {input_summary}
-  Output Details: {output_summary}
-"""
-        formatted_events.append(event_block)
-    
-    return "\n".join(formatted_events)
-
-
-def get_llm() -> Optional[Any]:
-    """Loads the LLM client; returns None if unavailable."""
-    try:
-        return Llm.model_named(LLM_MODEL_NAME)
-    except Exception as e:
-        # Don't log to session since we don't have a session context here
-        print(f"[summary-worker] LLM init failed: {e}", file=sys.stderr)
-        print(f"[summary-worker] Model: {LLM_MODEL_NAME}", file=sys.stderr)
-        print(f"[summary-worker] Python executable: {sys.executable}", file=sys.stderr)
-        return None
+def get_summary_generator() -> Optional[SummaryGenerator]:
+    """Get the global summary generator instance"""
+    global _summary_generator
+    with _generator_lock:
+        return _summary_generator
 
 
 def _summary_worker() -> None:
     """Background worker that consumes the queue and updates session summaries; robust to errors."""
-    global _summary_worker_init_success, _summary_worker_init_error
+    global _summary_worker_init_success, _summary_worker_init_error, _summary_generator
     
     print(f"[summary-worker] starting background thread with Python: {sys.executable}", file=sys.stderr)
     
-    # Initialize LLM and signal results
+    # Initialize the summary generator
     try:
-        llm = get_llm()
-        if llm is None:
-            error_msg = f"LLM initialization failed - model '{LLM_MODEL_NAME}' not available"
-            print(f"[summary-worker] {error_msg}", file=sys.stderr)
-            _summary_worker_init_success = False
-            _summary_worker_init_error = error_msg
-            _summary_worker_init_event.set()
-            return
+        with _generator_lock:
+            _summary_generator = SummaryGenerator(LLM_MODEL_NAME)
         
-        # Test the LLM with a simple query to ensure it's working
-        try:
-            test_response = llm.chat("Hello, please respond with 'OK' if you are working.")
-            if not test_response or len(test_response.strip()) == 0:
-                error_msg = f"LLM test failed - empty response from model '{LLM_MODEL_NAME}'"
-                print(f"[summary-worker] {error_msg}", file=sys.stderr)
-                _summary_worker_init_success = False
-                _summary_worker_init_error = error_msg
-                _summary_worker_init_event.set()
-                return
-        except Exception as e:
-            error_msg = f"LLM test failed: {e}"
+        if not _summary_generator.initialize():
+            error_msg = _summary_generator.init_error or "Unknown initialization error"
             print(f"[summary-worker] {error_msg}", file=sys.stderr)
             _summary_worker_init_success = False
             _summary_worker_init_error = error_msg
@@ -466,108 +353,25 @@ def _summary_worker() -> None:
                 # Use the old_summary from the first item (they should all be similar since they're queued in order)
                 old_summary = batched_items[0]["old_summary"]
                 
-                # Format all events for the LLM
-                all_events_text = format_batched_events(batched_items)
-
-                # Prepare the batched prompt
-                try:
-                    prompt = (
-                        "You are updating a technical knowledge base for a software project session. "
-                        "This knowledge base will be used by future AI assistants to understand how to work with this specific project. "
-                        "Your ONLY job is to extract and organize factual information that will help future work.\n\n"
-                        
-                        "==== CRITICAL REQUIREMENTS ====\n"
-                        "1. FUTURE-FOCUSED: Only include information that helps future LLMs work with this project\n"
-                        "2. FACTS ONLY: Document what IS, not what was attempted, tried, or discovered through process\n"
-                        "3. NO PROCESS DOCUMENTATION: Don't record commands run, attempts made, or discovery steps\n"
-                        "4. NO SUGGESTIONS: Never add ideas, recommendations, next steps, or best practices\n"
-                        "5. NO INVENTED INFORMATION: Only include information explicitly found or confirmed\n"
-                        "6. STRUCTURE OVER PROCESS: Document final project structure, not how it was discovered\n"
-                        "7. ACTIONABLE INFORMATION: Focus on 'how to work with this project' not 'what happened'\n\n"
-                        
-                        "==== WHAT TO INCLUDE ====\n"
-                        "- Project root directory (absolute path)\n"
-                        "- Code structure and file organization (as a clear diagram/map)\n"
-                        "- Key executable files and how to run them\n"
-                        "- Configuration details (dependencies, environment setup, build systems)\n"
-                        "- Development workflows (how to build, test, deploy if known)\n"
-                        "- Important file locations and their purposes\n"
-                        "- Technology stack and frameworks in use\n"
-                        "- Any work currently in progress (what specific task is being worked on)\n"
-                        "- Gotchas, specific requirements, or constraints that affect how to work with the code\n\n"
-                        
-                        "==== WHAT TO ABSOLUTELY NEVER INCLUDE ====\n"
-                        "- Command execution history or results\n"
-                        "- Failed attempts or troubleshooting steps\n"
-                        "- 'We tried X but found Y' - just state Y\n"
-                        "- Raw command outputs (ls, find results, etc.)\n"
-                        "- Suggestions about what to do next\n"
-                        "- Warnings, observations, or recommendations you think up\n"
-                        "- Best practices or general advice\n"
-                        "- 'Challenges encountered' or 'things to be aware of' (unless they came from explicit user input)\n"
-                        "- Process descriptions of how information was discovered\n"
-                        "- Your own analysis, conclusions, or interpretations beyond the direct facts\n\n"
-                        
-                        "==== EXAMPLE TRANSFORMATIONS ====\n"
-                        "BAD: 'We tried to go to ~/src/project but it failed, then found the code in /Volumes/T9/project'\n"
-                        "GOOD: 'Project code located at: /Volumes/T9/project'\n\n"
-                        
-                        "BAD: 'Ran ls command and found these files: main.py, config.py, tests/'\n"
-                        "GOOD: 'Code structure: main.py (entry point), config.py (configuration), tests/ (test suite)'\n\n"
-                        
-                        "BAD: 'Current progress: successfully read the main.py file and discovered it uses FastAPI'\n"
-                        "GOOD: 'Technology: FastAPI web framework'\n\n"
-                        
-                        "BAD: 'Challenges: no virtual environment found, need to create one'\n"
-                        "GOOD: [Don't include this unless a venv was explicitly created/configured]\n\n"
-                        
-                        "==== BATCH PROCESSING ====\n"
-                        f"You are processing {len(batched_items)} events together for efficiency. "
-                        "Extract information from ALL events and integrate them into a single updated knowledge base. "
-                        "Focus on the final state and cumulative knowledge, not the individual steps.\n\n"
-                        
-                        "==== YOUR RESPONSE FORMAT ====\n"
-                        "Provide a complete technical knowledge base that replaces the previous summary. "
-                        "Structure it clearly with specific sections. Use absolute paths. "
-                        "Make it immediately actionable for someone who needs to work with this project.\n\n"
-                        
-                        "==== CURRENT KNOWLEDGE BASE ====\n"
-                        f"{old_summary}\n\n"
-                        
-                        "==== NEW INFORMATION TO INTEGRATE ====\n"
-                        f"{all_events_text}\n\n"
-                        
-                        "Extract only the factual, actionable information from ALL these events and integrate it into "
-                        "the knowledge base. Ignore the process of how this information was obtained. "
-                        "Focus only on what a future LLM needs to know to work effectively with this project.\n\n"
-                        
-                        "Updated Knowledge Base:"
-                    )
-                except Exception as e:
-                    log_error(session_name, "_summary_worker", f"failed to prepare batched prompt: {e}")
-                    break  # Break out of retry loop, continue to next task
-
-                # Call LLM with the batched prompt
-                llm_start_time = time.time()
-                response = ""
-                error_msg = None
+                # Generate the summary using the new generator
+                result = _summary_generator.generate_summary(old_summary, batched_items)
                 
-                try:
-                    response = llm.chat(prompt)
-                    new_summary = response.strip()
-                    
-                    # Only save if the response is substantial (>= 256 characters)
-                    if len(new_summary) >= 256:
-                        save_session_summary(session_name, new_summary)
-                        print(f"[summary-worker] saved updated summary for session {session_name} (batch of {len(batched_items)} events)", file=sys.stderr)
-                    else:
-                        log_error(session_name, "_summary_worker", f"LLM response too short ({len(new_summary)} chars), not saving")
-                    
-                    # Success - break out of retry loop
-                    break
-                        
-                except Exception as e:
-                    error_msg = str(e)
+                # Log the LLM interaction
+                log_llm_interaction(
+                    session_name, 
+                    result.get("prompt", ""), 
+                    result.get("response", ""), 
+                    result.get("duration", 0.0), 
+                    result.get("error")
+                )
+                
+                if result["success"]:
+                    # Save the new summary
+                    save_session_summary(session_name, result["summary"])
+                    print(f"[summary-worker] saved updated architecture document for session {session_name} (batch of {len(batched_items)} events)", file=sys.stderr)
+                    break  # Success - break out of retry loop
+                else:
+                    error_msg = result["error"]
                     
                     # Check if this is a context length error
                     if "context length" in error_msg.lower():
@@ -593,17 +397,9 @@ def _summary_worker() -> None:
                             break
                     else:
                         # Not a context length error, log and break
-                        log_error(session_name, "_summary_worker", f"llm.chat failed for batch: {error_msg}")
-                        print(f"[summary-worker] llm.chat failed for session {session_name} batch: {e}", file=sys.stderr)
+                        log_error(session_name, "_summary_worker", f"summary generation failed: {error_msg}")
+                        print(f"[summary-worker] summary generation failed for session {session_name}: {error_msg}", file=sys.stderr)
                         break
-                
-                finally:
-                    # Log the LLM interaction for the batch
-                    try:
-                        llm_duration = time.time() - llm_start_time
-                        log_llm_interaction(session_name, prompt, response, llm_duration, error_msg)
-                    except Exception as e:
-                        log_error(session_name, "_summary_worker", f"failed to log LLM interaction: {e}")
 
             except Exception as e:
                 log_error(session_name or "unknown", "_summary_worker", f"unexpected error in summary worker batch: {e}")
