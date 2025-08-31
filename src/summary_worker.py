@@ -19,7 +19,7 @@ from .models import (
     _summary_worker_init_success, _summary_worker_init_error, Event
 )
 from .utils import save_session_summary, get_session_dir
-from .summary_generator import SummaryGenerator
+from .summary_generator import SummaryGenerator, _dazllm_available
 
 # Global token limit management
 _current_token_limit = 30000  # Default starting limit
@@ -31,6 +31,7 @@ _generator_lock = threading.Lock()
 
 # Summary system availability flag
 _summary_system_available = False
+_summary_worker_should_start = _dazllm_available
 
 
 def get_current_token_limit() -> int:
@@ -53,13 +54,22 @@ def is_summary_system_available() -> bool:
     return _summary_system_available
 
 
+def should_start_summary_worker() -> bool:
+    """Check if the summary worker should be started at all"""
+    return _summary_worker_should_start
+
+
 def is_summary_queue_empty() -> bool:
     """Check if the summary queue is empty"""
+    if not _summary_worker_should_start:
+        return True  # Consider it empty if worker doesn't exist
     return _summary_queue.empty()
 
 
 def get_summary_queue_size() -> int:
     """Get the approximate size of the summary queue"""
+    if not _summary_worker_should_start:
+        return 0  # No queue if no worker
     return _summary_queue.qsize()
 
 
@@ -73,6 +83,9 @@ def wait_for_summary_queue_empty(timeout: float = 30.0) -> bool:
     Returns:
         True if queue became empty within timeout, False otherwise
     """
+    if not _summary_worker_should_start:
+        return True  # No queue to wait for if no worker
+        
     start_time = time.time()
     
     while time.time() - start_time < timeout:
@@ -189,9 +202,12 @@ def log_error(session_name: str, function_name: str, error_message: str, extra_d
 
 def enqueue_summary(session_name: str, old_summary: str, event: Event) -> None:
     """Enqueue a summary update task"""
+    # Complete no-op if summary worker shouldn't exist
+    if not _summary_worker_should_start:
+        return
+        
     # Only enqueue if summary system is available
     if not _summary_system_available:
-        # Silently skip - no need to spam logs about this
         return
         
     try:
@@ -319,34 +335,11 @@ def _summary_worker() -> None:
         
         if not init_success:
             error_msg = _summary_generator.init_error or "Unknown initialization error"
-            
-            # Check if this is due to LLM unavailability
-            if not _summary_generator.llm_available:
-                print(f"[summary-worker] LLM functionality not available - continuing without summaries", file=sys.stderr)
-                print(f"[summary-worker] {error_msg}", file=sys.stderr)
-                _summary_worker_init_success = True  # Consider this a success - system can continue
-                _summary_worker_init_error = None
-                _summary_system_available = False  # But mark summary system as unavailable
-                _summary_worker_init_event.set()
-                
-                # Start a simple worker that just drains the queue without processing
-                print(f"[summary-worker] starting queue drain mode - summaries disabled", file=sys.stderr)
-                while True:
-                    try:
-                        task = _summary_queue.get()
-                        # Just mark as done without processing
-                        _summary_queue.task_done()
-                    except Exception as e:
-                        print(f"[summary-worker] error draining queue: {e}", file=sys.stderr)
-                        time.sleep(0.1)
-                return
-            else:
-                # Some other initialization error
-                print(f"[summary-worker] {error_msg}", file=sys.stderr)
-                _summary_worker_init_success = False
-                _summary_worker_init_error = error_msg
-                _summary_worker_init_event.set()
-                return
+            print(f"[summary-worker] {error_msg}", file=sys.stderr)
+            _summary_worker_init_success = False
+            _summary_worker_init_error = error_msg
+            _summary_worker_init_event.set()
+            return
         
         # Signal successful initialization
         print(f"[summary-worker] LLM successfully initialized", file=sys.stderr)
@@ -457,6 +450,12 @@ def _summary_worker() -> None:
 def ensure_summary_thread() -> None:
     """Ensures the background summary thread is started exactly once."""
     global _summary_thread_started
+    
+    # Don't start thread at all if LLM not available
+    if not _summary_worker_should_start:
+        print("[summary-worker] LLM not available - skipping summary worker thread creation", file=sys.stderr)
+        return
+    
     with _summary_thread_started_lock:
         if not _summary_thread_started:
             thread = threading.Thread(target=_summary_worker, daemon=True)
@@ -479,6 +478,11 @@ def wait_for_summary_worker_init(timeout: float = 10.0) -> bool:
         RuntimeError: If initialization failed with an error message
     """
     global _summary_worker_init_success, _summary_worker_init_error
+    
+    # If worker shouldn't start, consider initialization successful (no worker needed)
+    if not _summary_worker_should_start:
+        print("[summary-worker] No summary worker needed - LLM not available", file=sys.stderr)
+        return True
     
     if not _summary_worker_init_event.wait(timeout):
         raise RuntimeError(f"Summary worker initialization timed out after {timeout} seconds")
