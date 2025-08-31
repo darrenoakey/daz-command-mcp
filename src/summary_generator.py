@@ -14,14 +14,15 @@ import time
 import re
 from typing import Any, Dict, List, Optional
 
-# Fail-fast dependency check
+# Graceful dependency check - allow system to continue without LLM
+_dazllm_available = False
 try:
     from dazllm import Llm
+    _dazllm_available = True
 except ImportError as e:
-    print(f"FATAL ERROR: dazllm module not available: {e}", file=sys.stderr)
-    print(f"Install with: {sys.executable} -m pip install dazllm", file=sys.stderr)
-    print(f"Current Python executable: {sys.executable}", file=sys.stderr)
-    sys.exit(1)
+    print(f"[summary-generator] dazllm module not available: {e}", file=sys.stderr)
+    print(f"[summary-generator] Summary generation will be disabled, but other functionality will continue", file=sys.stderr)
+    Llm = None
 
 from .models import LLM_MODEL_NAME, Event
 from .utils import truncate_with_indication
@@ -36,6 +37,7 @@ class SummaryGenerator:
         self._llm = None
         self._initialized = False
         self._init_error = None
+        self._llm_available = _dazllm_available
     
     def initialize(self) -> bool:
         """
@@ -47,6 +49,11 @@ class SummaryGenerator:
         Raises:
             RuntimeError: If initialization fails with detailed error info.
         """
+        if not self._llm_available:
+            self._init_error = "dazllm module not available - LLM functionality disabled"
+            self._initialized = False
+            return False
+            
         try:
             self._llm = Llm.model_named(self.model_name)
             if self._llm is None:
@@ -80,6 +87,11 @@ class SummaryGenerator:
     def init_error(self) -> Optional[str]:
         """Get the initialization error message if any."""
         return self._init_error
+    
+    @property
+    def llm_available(self) -> bool:
+        """Check if LLM functionality is available at all."""
+        return self._llm_available
     
     def estimate_tokens(self, text: str) -> int:
         """
@@ -309,6 +321,17 @@ class SummaryGenerator:
             - duration: float with generation time in seconds
             - token_estimate: int with estimated token count
         """
+        if not self._llm_available:
+            return {
+                "success": False,
+                "summary": "",
+                "error": "LLM functionality not available - dazllm module missing",
+                "prompt": "",
+                "response": "",
+                "duration": 0.0,
+                "token_estimate": 0
+            }
+            
         if not self._initialized:
             return {
                 "success": False,
@@ -391,6 +414,14 @@ class SummaryGenerator:
         Returns:
             Dictionary with test results including success status and response.
         """
+        if not self._llm_available:
+            return {
+                "success": False,
+                "error": "LLM functionality not available - dazllm module missing",
+                "response": "",
+                "duration": 0.0
+            }
+            
         if not self._initialized:
             return {
                 "success": False,

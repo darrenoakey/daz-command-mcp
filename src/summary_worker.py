@@ -29,6 +29,9 @@ _token_limit_lock = threading.Lock()
 _summary_generator = None
 _generator_lock = threading.Lock()
 
+# Summary system availability flag
+_summary_system_available = False
+
 
 def get_current_token_limit() -> int:
     """Get the current dynamic token limit"""
@@ -43,6 +46,11 @@ def update_token_limit(new_limit: int) -> None:
         old_limit = _current_token_limit
         _current_token_limit = new_limit
         print(f"[summary-worker] token limit adjusted: {old_limit} → {new_limit}", file=sys.stderr)
+
+
+def is_summary_system_available() -> bool:
+    """Check if the summary system is available and functional"""
+    return _summary_system_available
 
 
 def is_summary_queue_empty() -> bool:
@@ -181,6 +189,11 @@ def log_error(session_name: str, function_name: str, error_message: str, extra_d
 
 def enqueue_summary(session_name: str, old_summary: str, event: Event) -> None:
     """Enqueue a summary update task"""
+    # Only enqueue if summary system is available
+    if not _summary_system_available:
+        # Silently skip - no need to spam logs about this
+        return
+        
     try:
         payload = {
             "session_name": session_name,
@@ -292,7 +305,7 @@ def get_summary_generator() -> Optional[SummaryGenerator]:
 
 def _summary_worker() -> None:
     """Background worker that consumes the queue and updates session summaries; robust to errors."""
-    global _summary_worker_init_success, _summary_worker_init_error, _summary_generator
+    global _summary_worker_init_success, _summary_worker_init_error, _summary_generator, _summary_system_available
     
     print(f"[summary-worker] starting background thread with Python: {sys.executable}", file=sys.stderr)
     
@@ -301,18 +314,45 @@ def _summary_worker() -> None:
         with _generator_lock:
             _summary_generator = SummaryGenerator(LLM_MODEL_NAME)
         
-        if not _summary_generator.initialize():
+        # Try to initialize the LLM
+        init_success = _summary_generator.initialize()
+        
+        if not init_success:
             error_msg = _summary_generator.init_error or "Unknown initialization error"
-            print(f"[summary-worker] {error_msg}", file=sys.stderr)
-            _summary_worker_init_success = False
-            _summary_worker_init_error = error_msg
-            _summary_worker_init_event.set()
-            return
+            
+            # Check if this is due to LLM unavailability
+            if not _summary_generator.llm_available:
+                print(f"[summary-worker] LLM functionality not available - continuing without summaries", file=sys.stderr)
+                print(f"[summary-worker] {error_msg}", file=sys.stderr)
+                _summary_worker_init_success = True  # Consider this a success - system can continue
+                _summary_worker_init_error = None
+                _summary_system_available = False  # But mark summary system as unavailable
+                _summary_worker_init_event.set()
+                
+                # Start a simple worker that just drains the queue without processing
+                print(f"[summary-worker] starting queue drain mode - summaries disabled", file=sys.stderr)
+                while True:
+                    try:
+                        task = _summary_queue.get()
+                        # Just mark as done without processing
+                        _summary_queue.task_done()
+                    except Exception as e:
+                        print(f"[summary-worker] error draining queue: {e}", file=sys.stderr)
+                        time.sleep(0.1)
+                return
+            else:
+                # Some other initialization error
+                print(f"[summary-worker] {error_msg}", file=sys.stderr)
+                _summary_worker_init_success = False
+                _summary_worker_init_error = error_msg
+                _summary_worker_init_event.set()
+                return
         
         # Signal successful initialization
         print(f"[summary-worker] LLM successfully initialized", file=sys.stderr)
         _summary_worker_init_success = True
         _summary_worker_init_error = None
+        _summary_system_available = True
         _summary_worker_init_event.set()
         
     except Exception as e:

@@ -9,13 +9,21 @@ import argparse
 import signal
 import sys
 from typing import Any
-from dazllm import Llm
 
-from src.summary_worker import ensure_summary_thread, wait_for_summary_worker_init
+# Graceful LLM dependency check - allow system to continue without it
+_dazllm_available = False
+try:
+    from dazllm import Llm
+    _dazllm_available = True
+except ImportError as e:
+    print(f"[mcp] dazllm module not available: {e}", file=sys.stderr)
+    print(f"[mcp] LLM functionality will be disabled, but other functionality will continue", file=sys.stderr)
+    Llm = None
+
+from src.summary_worker import ensure_summary_thread, wait_for_summary_worker_init, is_summary_system_available
 from src.mcp_tools import mcp
 
 LLM_MODEL_NAME = "lm-studio:openai/gpt-oss-20b"
-
 
 
 def main() -> None:
@@ -24,20 +32,31 @@ def main() -> None:
     # Remove the port argument since MCP servers communicate over stdio
     args = parser.parse_args()
 
-    llm_check = Llm()
-    if not llm_check: 
-        print("FATAL ERROR: Can't continue - llm not found", file=sys.stderr)
-        sys.exit(1)
+    # Check LLM availability but don't fail if not available
+    if _dazllm_available:
+        try:
+            llm_check = Llm()
+            if not llm_check: 
+                print("[mcp] LLM check failed - continuing without LLM functionality", file=sys.stderr)
+        except Exception as e:
+            print(f"[mcp] LLM check error: {e} - continuing without LLM functionality", file=sys.stderr)
+    else:
+        print("[mcp] dazllm not available - continuing without LLM functionality", file=sys.stderr)
 
     # Start the summary worker thread
     print("[mcp] starting summary worker...", file=sys.stderr)
     ensure_summary_thread()
     
-    # Wait for and validate summary worker initialization
+    # Wait for summary worker initialization but don't fail if it can't initialize LLM
     try:
         print("[mcp] waiting for summary worker initialization...", file=sys.stderr)
         wait_for_summary_worker_init(timeout=30.0)  # 30 second timeout
-        print("[mcp] summary worker successfully initialized", file=sys.stderr)
+        
+        if is_summary_system_available():
+            print("[mcp] summary worker successfully initialized with LLM functionality", file=sys.stderr)
+        else:
+            print("[mcp] summary worker initialized in no-LLM mode - summaries disabled", file=sys.stderr)
+            
     except RuntimeError as e:
         print(f"FATAL ERROR: Summary worker initialization failed: {e}", file=sys.stderr)
         print("[mcp] The MCP server cannot start without a working summary worker", file=sys.stderr)
