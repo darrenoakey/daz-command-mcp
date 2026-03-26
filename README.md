@@ -256,3 +256,7 @@ For issues and questions, please open an issue on GitHub or contact [your contac
 ---
 
 *Built with ❤️ for the Model Context Protocol ecosystem*
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
